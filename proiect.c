@@ -43,13 +43,19 @@ int is_dir(char *path, struct stat buff){
 }
 
 int is_reg(char *path, struct stat buff){
- 
-
   if(S_ISREG(buff.st_mode)){
       return 1;
   }
+  
   return 0;
+}
 
+int is_link(char *path, struct stat buff){
+  if(S_ISLNK(buff.st_mode)){
+      return 1;
+  }
+  
+  return 0;
 }
 
 void read_header(){
@@ -134,6 +140,58 @@ char *access_others(mode_t access){
   return o;
 }
 
+void info_files(int reg, int file_size, int user_id, struct tm *time, long int no_links, mode_t access){
+
+  if(reg){
+    sprintf(line, "dimensiune: %d\n", file_size);
+    write_file();
+  }
+
+  sprintf(line, "identificatorul utilizatorului: %d\n", user_id);
+  write_file();
+
+  if(reg){
+    sprintf(line, "timpul ultimei modificari: %d.%d.%d\n", time->tm_mday, time->tm_mon+1, time->tm_year+1900);
+    write_file();
+
+    sprintf(line, "contorul de legaturi: %ld\n", no_links);
+    write_file();
+  }
+
+  sprintf(line, "drepturi de acces user: %s\n", access_user(access));
+  write_file();
+
+  sprintf(line, "drepturi de acces grup: %s\n", access_group(access));
+  write_file();
+
+  sprintf(line, "drepturi de acces altii: %s\n", access_others(access));
+  write_file();
+
+}
+
+void info_symlink(char *name, int file_size, int target_size, mode_t access){
+  sprintf(line, "nume legatura: %s\n", name);
+  write_file();
+
+  sprintf(line, "dimensiune: %d\n", file_size);
+  write_file();
+
+  sprintf(line, "dimensiune fisier: %d\n", target_size);
+  write_file();
+
+  sprintf(line, "drepturi de acces user: %s\n", access_user(access));
+  write_file();
+
+  sprintf(line, "drepturi de acces grup: %s\n", access_group(access));
+  write_file();
+
+  sprintf(line, "drepturi de acces altii: %s\n", access_others(access));
+  write_file();
+  
+}
+
+
+
 int main(int args, char **argv){
 
   if(args > 2){
@@ -163,9 +221,10 @@ int main(int args, char **argv){
     exit(EXIT_FAILURE);
   }
 
-  readdir(director);
-  readdir(director);
   while((f=readdir(director)) != NULL){
+    if(strcmp(f->d_name,".") == 0 || strcmp(f->d_name,"..") == 0){
+      continue;
+    }
     sprintf(cale, "%s/%s", argv[1], f->d_name);
     printf("%s\n", cale);
     
@@ -173,56 +232,77 @@ int main(int args, char **argv){
     perror("stat not working");
     exit(EXIT_FAILURE);
     }
+
+    uid_t user_id = buff.st_uid;
+    struct timespec lastModifiedTime = buff.st_mtim;
+    struct tm *time = localtime(&lastModifiedTime.tv_sec);
+    nlink_t no_links = buff.st_nlink;
+    mode_t access = buff.st_mode;
+    int reg = 0;
     
     if(is_image(cale,buff)){
+      
       file=open(cale, O_RDONLY);
       if(file == -1){
 	 perror("Nu s-a putut deschide imaginea");
 	 exit(EXIT_FAILURE);
        }
+      
        read_header();
+       reg = 1;
 
-       uid_t user_id = buff.st_uid;
-       struct timespec lastModifiedTime = buff.st_mtim;
-       struct tm *time = localtime(&lastModifiedTime.tv_sec);
-       nlink_t no_links = buff.st_nlink;
-       mode_t access = buff.st_mode;
-
-       sprintf(line, "nume fisier: %s\n", cale);
+       sprintf(line, "nume fisier: %s\n", f->d_name);
        write_file();
-  
+
        sprintf(line, "inaltime: %d\n", width);
        write_file();
 
        sprintf(line, "lungime: %d\n", height);
        write_file();
 
-       sprintf(line, "dimensiune: %d\n", file_size);
-       write_file();
-
-       sprintf(line, "identificatorul utilizatorului: %d\n", user_id);
-       write_file();
-
-       sprintf(line, "timpul ultimei modificari: %d.%d.%d\n", time->tm_mday, time->tm_mon+1, time->tm_year+1900);
-       write_file();
-
-       sprintf(line, "contorul de legaturi: %ld\n", no_links);
-       write_file();
-
-       sprintf(line, "drepturi de acces user: %s\n", access_user(access));
-       write_file();
-
-       sprintf(line, "drepturi de acces grup: %s\n", access_group(access));
-       write_file();
-
-       sprintf(line, "drepturi de acces altii: %s\n", access_others(access));
-       write_file();
+       info_files(reg, file_size, user_id, time, no_links, access);
 
     }
+    else if(is_reg(cale, buff)){
+      sprintf(line, "nume fisier: %s\n", f->d_name);
+      write_file();
+      reg = 1;
+
+      info_files(reg, buff.st_size, user_id, time, no_links, access);
+    }
+
+    else if(is_dir(cale, buff)){
+      sprintf(line, "nume director: %s\n", f->d_name);
+      write_file();
+
+      info_files(reg, buff.st_size, user_id, time, no_links, access);
+      
+    }
+
+    else if(is_link(cale, buff)){
+
+
+      char dest[350];
+      int size = readlink(f->d_name, dest, sizeof(dest)-1);
+      if(size != -1){
+	dest[size] = '\0';
+	
+	struct stat target;
+	if(stat(dest, &target) == -1){
+	  perror("Stat for target not working");
+	  exit(EXIT_FAILURE);
+	}
+
+	int target_size = target.st_size;
+	sprintf(line, "nume legatura: %s\n", f->d_name);
+	write_file();
+	info_symlink(f->d_name, file_size, target_size, access);
+      }
+      else{
+	perror("Can't read symbolic link destination");
+	exit(EXIT_FAILURE);
+      }
+    }
   }
-
- 
-
-  
   
 }
