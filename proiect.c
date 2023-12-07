@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 int file, file2;
 struct stat buff;
@@ -32,7 +33,7 @@ int is_image(char *path, struct stat buff){
 
 }
 
-int is_dir(char *path, struct stat buff){
+int is_dir(struct stat buff){
  
 
   if(S_ISDIR(buff.st_mode)){
@@ -42,7 +43,7 @@ int is_dir(char *path, struct stat buff){
 
 }
 
-int is_reg(char *path, struct stat buff){
+int is_reg(struct stat buff){
   if(S_ISREG(buff.st_mode)){
       return 1;
   }
@@ -50,7 +51,7 @@ int is_reg(char *path, struct stat buff){
   return 0;
 }
 
-int is_link(char *path, struct stat buff){
+int is_link(struct stat buff){
   if(S_ISLNK(buff.st_mode)){
       return 1;
   }
@@ -169,14 +170,20 @@ void info_files(int reg, int file_size, int user_id, struct tm *time, long int n
 
 }
 
-void info_symlink(char *name, int file_size, int target_size, mode_t access){
+void info_symlink(char *name, int file_size, mode_t access){
+  struct stat sym_link;
+  if(stat(cale, &sym_link) == -1){
+    perror("Eroare lstat target");
+    exit(EXIT_FAILURE);
+  }
+  
   sprintf(line, "nume legatura: %s\n", name);
   write_file();
 
   sprintf(line, "dimensiune: %d\n", file_size);
   write_file();
 
-  sprintf(line, "dimensiune fisier: %d\n", target_size);
+  sprintf(line, "dimensiune fisier: %ld\n", sym_link.st_size);
   write_file();
 
   sprintf(line, "drepturi de acces user: %s\n", access_user(access));
@@ -190,12 +197,36 @@ void info_symlink(char *name, int file_size, int target_size, mode_t access){
   
 }
 
+void statistica(char* dir, char* name){
+  char filepath[300];
+  sprintf(filepath, "%s/%s_statistica.txt", dir, name);
+	
+  int fd = open(filepath, O_RDONLY | O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if(fd == -1){
+    perror("Can't open file for writing directory");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void waiting(pid_t pid){
+  int status;
+  pid_t w = waitpid(pid, &status, 0);
+      
+  if(w == -1){
+    perror("Error waitpid directory");
+    exit(EXIT_FAILURE);
+  }
+  else if(w == pid){
+    printf("Process with id %d ended with the status %d\n", pid,status);
+}
+}
+
 
 
 int main(int args, char **argv){
 
-  if(args > 2){
-    perror("Usage ./program <fisier_intrare>");
+  if(args != 3){
+    perror("Usage ./program <director_intrare> <director_iesire>");
     exit(EXIT_FAILURE);
   }
 
@@ -204,12 +235,23 @@ int main(int args, char **argv){
     exit(EXIT_FAILURE);
     }
 
-  if(!is_dir(argv[1], buff)){
-    perror("Incorrect file type");
+  if(!is_dir(buff)){
+    perror("Incorrect first file type");
     exit(EXIT_FAILURE);
   }
 
-  file2=open("statistica.txt", O_WRONLY);
+  if(stat(argv[2], &buff) == -1){
+    perror("stat 2 not working");
+    exit(EXIT_FAILURE);
+    }
+
+  if(!is_dir(buff)){
+    perror("Incorrect second file type");
+    exit(EXIT_FAILURE);
+  }
+
+  file2 = open("statistica.txt", O_RDONLY | O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  
   if(file2 == -1){
     perror("Nu s-a putut deschide fisierul pentru scriere");
     exit(EXIT_FAILURE);
@@ -228,8 +270,8 @@ int main(int args, char **argv){
     sprintf(cale, "%s/%s", argv[1], f->d_name);
     printf("%s\n", cale);
     
-    if(stat(cale, &buff) == -1){
-    perror("stat not working");
+    if(lstat(cale, &buff) == -1){
+    perror("lstat not working");
     exit(EXIT_FAILURE);
     }
 
@@ -263,45 +305,63 @@ int main(int args, char **argv){
        info_files(reg, file_size, user_id, time, no_links, access);
 
     }
-    else if(is_reg(cale, buff)){
-      sprintf(line, "nume fisier: %s\n", f->d_name);
-      write_file();
-      reg = 1;
+    else if(is_reg(buff)){
+      pid_t id_reg = fork();
+      if(id_reg < 0){
+	perror("Error fork directory");
+	exit(EXIT_FAILURE);
+      }
+      if(id_reg == 0){
+	statistica(argv[2], f->d_name);
 
-      info_files(reg, buff.st_size, user_id, time, no_links, access);
-    }
+	sprintf(line, "nume fisier: %s\n", f->d_name);
+	write_file();
+	reg = 1;
+	info_files(reg, buff.st_size, user_id, time, no_links, access);
 
-    else if(is_dir(cale, buff)){
-      sprintf(line, "nume director: %s\n", f->d_name);
-      write_file();
+	exit(EXIT_SUCCESS);
+      }
 
-      info_files(reg, buff.st_size, user_id, time, no_links, access);
+      waiting(id_reg);
       
     }
 
-    else if(is_link(cale, buff)){
-
-
-      char dest[350];
-      int size = readlink(f->d_name, dest, sizeof(dest)-1);
-      if(size != -1){
-	dest[size] = '\0';
-	
-	struct stat target;
-	if(stat(dest, &target) == -1){
-	  perror("Stat for target not working");
-	  exit(EXIT_FAILURE);
-	}
-
-	int target_size = target.st_size;
-	sprintf(line, "nume legatura: %s\n", f->d_name);
-	write_file();
-	info_symlink(f->d_name, file_size, target_size, access);
-      }
-      else{
-	perror("Can't read symbolic link destination");
+    else if(is_dir(buff)){
+      pid_t id_dir = fork();
+      if(id_dir < 0){
+	perror("Error fork directory");
 	exit(EXIT_FAILURE);
       }
+      
+      if(id_dir == 0){
+	statistica(argv[2], f->d_name);
+	sprintf(line, "nume director: %s\n", f->d_name);
+	write_file();
+
+	info_files(reg, buff.st_size, user_id, time, no_links, access);
+
+	exit(EXIT_SUCCESS);
+      }
+      
+      waiting(id_dir);
+    }
+
+    else if(is_link(buff)){
+      pid_t link_id = fork();
+      if(link_id < 0){
+	perror("Error fork directory");
+	exit(EXIT_FAILURE);
+      }
+      
+      if(link_id == 0){
+	statistica(argv[2], f->d_name);
+
+        info_symlink(f->d_name, buff.st_size, access);
+
+	exit(EXIT_SUCCESS);
+      }
+
+      waiting(link_id);
     }
   }
   
