@@ -272,8 +272,8 @@ void gray_scale(char *path){
 
 int main(int args, char **argv){
 
-  if(args != 3){
-    perror("Usage ./program <director_intrare> <director_iesire>");
+  if(args != 4){
+    perror("Usage ./program <director_intrare> <director_iesire> <c>");
     exit(EXIT_FAILURE);
   }
 
@@ -294,6 +294,11 @@ int main(int args, char **argv){
 
   if(!is_dir(buff)){
     perror("Incorrect second file type");
+    exit(EXIT_FAILURE);
+  }
+
+  if(strlen(argv[3]) != 1){
+    perror("Incorrect third argument type");
     exit(EXIT_FAILURE);
   }
 
@@ -387,8 +392,15 @@ int main(int args, char **argv){
 
     }
     else if(is_reg(buff)){
-      pid_t id_reg = fork();
-      if(id_reg < 0){
+      pid_t id_reg, id_reg2;
+      int fd[2];
+      
+      if(pipe(fd)<0){
+	perror("Error pipe");
+	exit(EXIT_FAILURE);
+      }
+      
+      if((id_reg = fork()) < 0){
 	perror("Error fork regular file");
 	exit(EXIT_FAILURE);
       }
@@ -397,14 +409,47 @@ int main(int args, char **argv){
 
 	sprintf(line, "nume fisier: %s\n", f->d_name);
 	write_file();
-        written_lines++;
+      
 	reg = 1;
 	info_files(reg, buff.st_size, user_id, time, no_links, access, &written_lines);
 
-	exit(written_lines);
+	close(fd[0]);
+	
+	dup2(fd[1], 1);
+	close(fd[1]);
+	execlp("cat", "cat", cale, NULL);
+
+	perror("Error at execlp cat");
+	exit(EXIT_FAILURE);
+      }
+      if((id_reg2 = fork()) < 0){
+	perror("Error fork 2 regular file");
+	exit(EXIT_FAILURE);
+      }
+      if(id_reg2 == 0){
+	close(fd[1]);
+	dup2(fd[0], 0);
+	close(fd[0]);
+	execlp("bash", "bash", "proiect.sh", argv[3], NULL);
+	perror("Error at execlp bash");
+	exit(EXIT_FAILURE);
+      }
+      
+      close(fd[0]);
+      close(fd[1]);
+
+      int status1, status2;
+      int w = waitpid(id_reg, &status1, 0);
+      int w2 = waitpid(id_reg2, &status2, 0);
+
+      if(w == id_reg){
+	printf("Process with id %d ended with status %d\n", id_reg, status1);
+      }
+      if(w2 == id_reg2){
+	printf("Process with id %d ended with status %d\n", id_reg2, status2);
       }
 
-      waiting(id_reg);
+      
       
     }
 
@@ -452,5 +497,6 @@ int main(int args, char **argv){
       waiting(link_id);
     }
   }
-  
+  closedir(director);
+  close(file2);
 }
