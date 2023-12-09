@@ -23,6 +23,7 @@ char o[4];
 struct dirent *f;
 char cale[300];
 char filepath[300];
+int s = 0;
 
 int is_image(char *path, struct stat buff){
  
@@ -320,7 +321,6 @@ int main(int args, char **argv){
       continue;
     }
     sprintf(cale, "%s/%s", argv[1], f->d_name);
-    printf("%s\n", cale);
     
     if(lstat(cale, &buff) == -1){
     perror("lstat not working");
@@ -394,9 +394,15 @@ int main(int args, char **argv){
     else if(is_reg(buff)){
       pid_t id_reg, id_reg2;
       int fd[2];
+      int fd2[2];
       
       if(pipe(fd)<0){
 	perror("Error pipe");
+	exit(EXIT_FAILURE);
+      }
+
+      if(pipe(fd2)<0){
+	perror("Error pipe 2");
 	exit(EXIT_FAILURE);
       }
       
@@ -422,14 +428,21 @@ int main(int args, char **argv){
 	perror("Error at execlp cat");
 	exit(EXIT_FAILURE);
       }
+
       if((id_reg2 = fork()) < 0){
 	perror("Error fork 2 regular file");
 	exit(EXIT_FAILURE);
       }
       if(id_reg2 == 0){
 	close(fd[1]);
+	
 	dup2(fd[0], 0);
 	close(fd[0]);
+	
+	//close(fd2[0]);
+	dup2(fd2[1],1);
+	close(fd2[1]);
+	
 	execlp("bash", "bash", "proiect.sh", argv[3], NULL);
 	perror("Error at execlp bash");
 	exit(EXIT_FAILURE);
@@ -437,19 +450,28 @@ int main(int args, char **argv){
       
       close(fd[0]);
       close(fd[1]);
+      close(fd2[1]);
 
       int status1, status2;
       int w = waitpid(id_reg, &status1, 0);
-      int w2 = waitpid(id_reg2, &status2, 0);
+      
 
-      if(w == id_reg){
+       if(w == id_reg){
 	printf("Process with id %d ended with status %d\n", id_reg, status1);
       }
+      
+
+      char result[2];
+      int bytes = read(fd2[0], &result, sizeof(int));
+
+      
+      close(fd2[0]);
+      int nr = atoi(result);
+      s=s+nr;
+      int w2 = waitpid(id_reg2, &status2, 0);
       if(w2 == id_reg2){
 	printf("Process with id %d ended with status %d\n", id_reg2, status2);
       }
-
-      
       
     }
 
@@ -470,7 +492,6 @@ int main(int args, char **argv){
 	written_lines++;
 	
 	info_files(reg, buff.st_size, user_id, time, no_links, access, &written_lines);
-	printf("%d\n", written_lines);
 	
         exit(written_lines);
 
@@ -499,4 +520,5 @@ int main(int args, char **argv){
   }
   closedir(director);
   close(file2);
+  printf("Au fost identificate in total %d propozitii corecte care contin caracterul %c\n", s, argv[3][0]);
 }
